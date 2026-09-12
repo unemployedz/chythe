@@ -14,7 +14,12 @@ app.listen(port, '0.0.0.0', () => console.log(`Health server listening on ${port
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const commands = [
   new SlashCommandBuilder().setName('setup').setDescription('Open the moderation setup panel').setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('purge').setDescription('Safely bulk-delete recent messages').addIntegerOption(o => o.setName('amount').setDescription('1-100 messages').setMinValue(1).setMaxValue(100).setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+  new SlashCommandBuilder()
+    .setName('purge')
+    .setDescription('Clean recent messages using Discord-supported batches')
+    .addIntegerOption(o => o.setName('amount').setDescription('1-10000 messages').setMinValue(1).setMaxValue(10000).setRequired(true))
+    .addBooleanOption(o => o.setName('keep_media').setDescription('Keep messages containing image/file attachments'))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
@@ -22,6 +27,50 @@ client.once('ready', async () => {
   await rest.put(Routes.applicationCommands(clientId), { body: commands });
   console.log(`Logged in as ${client.user.tag}`);
 });
+
+async function purgeRecent(channel, requested, keepMedia, onProgress) {
+  let remaining = requested;
+  let deleted = 0;
+  let scanned = 0;
+  let lastId;
+
+  while (remaining > 0) {
+    if (!keepMedia) {
+      const batch = Math.min(100, remaining);
+      const result = await channel.bulkDelete(batch, true);
+      const count = result.size;
+      deleted += count;
+      remaining -= count;
+      await onProgress(deleted, scanned + count, requested);
+      if (count < batch) break;
+      continue;
+    }
+
+    const options = { limit: Math.min(100, remaining) };
+    if (lastId) options.before = lastId;
+    const messages = await channel.messages.fetch(options);
+    if (!messages.size) break;
+
+    lastId = messages.last().id;
+    scanned += messages.size;
+    const removable = messages.filter(m => m.attachments.size === 0 && m.embeds.size === 0);
+    if (removable.size) {
+      const removableArray = [...removable.values()];
+      for (let i = 0; i < removableArray.length; i += 100) {
+        const batch = removableArray.slice(i, i + 100);
+        await channel.bulkDelete(batch, true);
+        deleted += batch.length;
+        remaining = Math.max(0, requested - deleted);
+        await onProgress(deleted, scanned, requested);
+      }
+    }
+
+    if (messages.size < options.limit) break;
+    if (deleted >= requested) break;
+  }
+
+  return { deleted, scanned };
+}
 
 client.on('interactionCreate', async interaction => {
   try {
@@ -38,11 +87,12 @@ client.on('interactionCreate', async interaction => {
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages)) return interaction.reply({ content: 'You need Manage Messages.', ephemeral: true });
       if (!interaction.channel?.permissionsFor(interaction.guild.members.me)?.has(PermissionFlagsBits.ManageMessages)) return interaction.reply({ content: 'I need Manage Messages in this channel.', ephemeral: true });
       const amount = interaction.options.getInteger('amount', true);
+      const keepMedia = interaction.options.getBoolean('keep_media') ?? false;
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`purge_confirm:${amount}:${interaction.user.id}`).setLabel(`Delete ${amount}`).setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`purge_confirm:${amount}:${keepMedia ? 'media' : 'all'}:${interaction.user.id}`).setLabel(`Delete ${amount}`).setStyle(ButtonStyle.Danger),
         new ButtonBuilder().setCustomId(`purge_cancel:${interaction.user.id}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary)
       );
-      return interaction.reply({ content: `Confirm deletion of up to **${amount} recent messages**.`, components: [row], ephemeral: true });
+      return interaction.reply({ content: `Confirm cleanup of up to **${amount.toLocaleString()} recent messages**${keepMedia ? ' while keeping messages with attachments/embeds' : ''}.`, components: [row], ephemeral: true });
     }
 
     if (!interaction.isButton()) return;
@@ -52,10 +102,15 @@ client.on('interactionCreate', async interaction => {
     if (parts[0] === 'status') return interaction.reply({ content: `Online: ${client.ws.status === 0 ? 'yes' : 'no'}\nGuilds: ${client.guilds.cache.size}`, ephemeral: true });
     if (parts[0] === 'permissions') return interaction.reply({ content: 'Required: Manage Server for /setup; Manage Messages for /purge.', ephemeral: true });
     if (parts[0] === 'purge_cancel') return interaction.update({ content: 'Cancelled.', components: [] });
+
     if (parts[0] === 'purge_confirm') {
       const amount = Number(parts[1]);
-      const deleted = await interaction.channel.bulkDelete(amount, true);
-      return interaction.update({ content: `Deleted ${deleted.size} recent message(s). Older than 14 days are not bulk-deletable.`, components: [] });
+      const keepMedia = parts[2] === 'media';
+      await interaction.update({ content: `Cleaning **0 / ${amount.toLocaleString()}**...`, components: [] });
+      const result = await purgeRecent(interaction.channel, amount, keepMedia, async (deleted, scanned, requested) => {
+        await interaction.editReply({ content: `Cleaning **${deleted.toLocaleString()} / ${requested.toLocaleString()}**...\nScanned: **${scanned.toLocaleString()}**` }).catch(() => {});
+      });
+      return interaction.editReply({ content: `Cleanup finished. Deleted **${result.deleted.toLocaleString()}** message(s) and scanned **${result.scanned.toLocaleString()}**. Discord does not bulk-delete messages older than 14 days.`, components: [] });
     }
   } catch (error) {
     console.error(error);
