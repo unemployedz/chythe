@@ -28,8 +28,8 @@ client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand() && interaction.commandName === 'setup') {
       const embed = new EmbedBuilder().setTitle('Chythe Moderation').setDescription('Use the controls below to check bot status and required permissions.').setColor(0x5865f2);
       const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('status').setLabel('Status').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId('permissions').setLabel('Permissions').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(`status:${interaction.user.id}`).setLabel('Status').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`permissions:${interaction.user.id}`).setLabel('Permissions').setStyle(ButtonStyle.Secondary)
       );
       return interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
     }
