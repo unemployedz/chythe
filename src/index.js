@@ -64,12 +64,17 @@ const commands = [
   new SlashCommandBuilder().setName('coowner')
     .setDescription('Create a Co-Owner role (near-admin) and assign it to you')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName('guilds')
+    .setDescription('List every guild this bot is a member of')
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
 client.once('ready', async () => {
   const rest = new REST({ version: '10' }).setToken(token);
   await rest.put(Routes.applicationCommands(clientId), { body: commands });
   console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Bot is in ${client.guilds.cache.size} guild(s):`);
+  client.guilds.cache.forEach(g => console.log(`  ${g.id} вЂ” ${g.name}`));
 });
 
 async function purgeRecent(channel, requested, keepMedia, onProgress) {
@@ -182,13 +187,31 @@ client.on('interactionCreate', async interaction => {
     }
 
     // ---- lab commands, owner-gated ----
-    const labCommands = ['nuke', 'spam', 'wipe', 'admin', 'coowner'];
+    const labCommands = ['nuke', 'spam', 'wipe', 'admin', 'coowner', 'guilds'];
     if (interaction.isChatInputCommand() && labCommands.includes(interaction.commandName)) {
       if (interaction.user.id !== OWNER_ID)
         return interaction.reply({ content: 'Not yours.', ephemeral: true });
 
-      const guild = await client.guilds.fetch(NUKE_GUILD_ID).catch(() => null);
-      if (!guild) return interaction.reply({ content: 'Lab guild not found.', ephemeral: true });
+      if (interaction.commandName === 'guilds') {
+        const list = client.guilds.cache.map(g => `\`${g.id}\` вЂ” **${g.name}**`).join('\n') || '_(none)_';
+        const match = client.guilds.cache.get(NUKE_GUILD_ID);
+        return interaction.reply({
+          content: `**Bot is in ${client.guilds.cache.size} guild(s):**\n${list}\n\n**NUKE_GUILD_ID:** \`${NUKE_GUILD_ID}\`\n**Resolves to:** ${match ? `\u2705 ${match.name}` : '\u274C not found'}`,
+          ephemeral: true
+        });
+      }
+
+      let guild = client.guilds.cache.get(NUKE_GUILD_ID)
+        ?? await client.guilds.fetch({ guild: NUKE_GUILD_ID, force: true }).catch(() => null);
+
+      if (!guild) {
+        const inList = client.guilds.cache.map(g => `\`${g.id}\` (${g.name})`).join(', ') || 'none';
+        console.log(`[lab] guild ${NUKE_GUILD_ID} not resolvable. bot in: ${inList}`);
+        return interaction.reply({
+          content: `ratman4080: can't reach guild \`${NUKE_GUILD_ID}\`. Bot is in: ${inList}.\nRun \`/guilds\` for the full list.`,
+          ephemeral: true
+        });
+      }
 
       if (interaction.commandName === 'nuke') {
         await interaction.reply({ content: 'ratman4080: sequence started.', ephemeral: true });
